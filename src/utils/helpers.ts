@@ -1,77 +1,94 @@
-/* eslint-disable no-use-before-define */
-import { Buffer } from "buffer";
-import * as cbors from "@stricahq/cbors";
-import BigNumber from "bignumber.js";
-import _ from "lodash";
-import { encodeLanguageViews } from "./encoder";
-import { LanguageView, NativeScript, Token, WitnessType } from "../types";
-import { hash32 } from "./crypto";
-import { EncodedWitnesses } from "../internal-types";
+import type { NativeScript, Token } from "../types";
 
 /**
- * returns unique tokens with sum of amount for same tokens
+ * The tokens with the amounts of each asset summed. Policy ids and asset names are hex, so
+ * they're matched whatever their case and returned in lowercase.
  */
 export const getUniqueTokens = (tokens: Array<Token>): Array<Token> => {
-  return _(tokens)
-    .groupBy(({ policyId }) => policyId)
-    .map((policyMap, policyId) =>
-      _(policyMap)
-        .groupBy(({ assetName }) => assetName)
-        .map((assetArray, assetName) => ({
-          policyId,
-          assetName,
-          amount: assetArray.reduce((acc, asset) => acc.plus(asset.amount), new BigNumber(0)),
-        }))
-        .value()
-    )
-    .flatten()
-    .value();
+  const policies = new Map<string, Map<string, Token>>();
+  for (const token of tokens) {
+    const policyId = token.policyId.toLowerCase();
+    const assetName = token.assetName.toLowerCase();
+    let assets = policies.get(policyId);
+    if (!assets) {
+      assets = new Map();
+      policies.set(policyId, assets);
+    }
+    const amount = (assets.get(assetName)?.amount ?? 0n) + token.amount;
+    assets.set(assetName, { policyId, assetName, amount });
+  }
+  return [...policies.values()].flatMap((assets) => [...assets.values()]);
 };
 
 export const getTokenDiff = (
   inputToken: Array<Token>,
   outputTokens: Array<Token>
 ): Array<Token> => {
-  const negativeValueOutputTokens = _.map(outputTokens, (token) => ({
+  const negativeValueOutputTokens = outputTokens.map((token) => ({
     ...token,
-    amount: token.amount.negated(),
+    amount: -token.amount,
   }));
 
-  return getUniqueTokens(inputToken.concat(negativeValueOutputTokens)).filter((token) =>
-    token.amount.abs().gt(0)
+  return getUniqueTokens(inputToken.concat(negativeValueOutputTokens)).filter(
+    (token) => token.amount !== 0n
   );
 };
 
+const utf8 = new TextEncoder();
+
+// metadata integers are CBOR major type 0 or 1, never bignums
+const MIN_METADATA_INT = -(2n ** 64n);
+const MAX_METADATA_INT = 2n ** 64n - 1n;
+const MAX_METADATA_BYTES = 64;
+
+const isPlainObject = (value: object): boolean => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+/**
+ * Checks a metadata value against the ledger's rules, and turns plain objects into maps with
+ * text keys. Strings (as UTF-8) and byte strings hold at most 64 bytes, integers fit in
+ * 64 bits. Anything else, a float, a boolean or null, can't be metadata and throws.
+ */
 export const sanitizeMetadata = (metadata: unknown): unknown => {
-  if (metadata instanceof Array) {
-    const ary = [];
-    for (const d of metadata) {
-      ary.push(sanitizeMetadata(d));
-    }
-    return ary;
+  if (Array.isArray(metadata)) {
+    return metadata.map((d) => sanitizeMetadata(d));
   }
-  if (typeof metadata === "string" || metadata instanceof Buffer) {
-    if (metadata.length > 64) {
+  if (typeof metadata === "string" || metadata instanceof Uint8Array) {
+    const length = typeof metadata === "string" ? utf8.encode(metadata).length : metadata.length;
+    if (length > MAX_METADATA_BYTES) {
       throw new Error("string or buffer length invalid");
     }
     return metadata;
   }
-  // TODO: map is also an object, hence check map first, maybe requires a proper fix
+  if (typeof metadata === "number") {
+    if (!Number.isSafeInteger(metadata)) {
+      throw new Error(`metadata numbers must be safe integers, use a bigint for ${metadata}`);
+    }
+    return metadata;
+  }
+  if (typeof metadata === "bigint") {
+    if (metadata < MIN_METADATA_INT || metadata > MAX_METADATA_INT) {
+      throw new Error(`metadata integer out of range: ${metadata}`);
+    }
+    return metadata;
+  }
   if (metadata instanceof Map) {
     const map = new Map();
     for (const [key, value] of metadata.entries()) {
-      map.set(key, sanitizeMetadata(value));
+      map.set(sanitizeMetadata(key), sanitizeMetadata(value));
     }
     return map;
   }
-  if (metadata instanceof Object) {
+  if (typeof metadata === "object" && metadata !== null && isPlainObject(metadata)) {
     const map = new Map();
     for (const [key, value] of Object.entries(metadata)) {
-      map.set(key, sanitizeMetadata(value));
+      map.set(sanitizeMetadata(key), sanitizeMetadata(value));
     }
     return map;
   }
-  return metadata;
+  throw new Error(`Unsupported metadata value: ${String(metadata)}`);
 };
 
 export const compareCanonically = (str1: string, str2: string): number => {
@@ -89,63 +106,32 @@ export const compareCanonically = (str1: string, str2: string): number => {
   return 0;
 };
 
+/**
+ * Tokens in canonical CBOR order: by policy id, then by asset name, each shorter first and
+ * then bytewise.
+ */
 export const sortTokens = (tokens: Array<Token>): Array<Token> => {
-  const sortedTokens = _(tokens)
-    .orderBy(["policyId", "assetName"], ["asc", "asc"])
-    .sort((token1, token2) => compareCanonically(token1.assetName, token2.assetName))
-    .sort((token1, token2) => compareCanonically(token1.policyId, token2.policyId))
-    .value();
-  return sortedTokens;
+  return [...tokens].sort(
+    (token1, token2) =>
+      compareCanonically(token1.policyId, token2.policyId) ||
+      compareCanonically(token1.assetName, token2.assetName)
+  );
 };
 
-export const generateScriptDataHash = (
-  languageView: LanguageView | undefined,
-  witnesses: EncodedWitnesses,
-  isPlutusV1: boolean,
-  isPlutusV2: boolean,
-  isPlutusV3: boolean
-): Buffer | undefined => {
-  const encodedPlutusDataList = witnesses.get(WitnessType.PLUTUS_DATA);
-  const encodedRedeemers = witnesses.get(WitnessType.REDEEMER);
-  if (isPlutusV1 || isPlutusV2 || isPlutusV3) {
-    const langViewCbor = encodeLanguageViews(languageView, isPlutusV1, isPlutusV2, isPlutusV3);
-
-    const plutusDataCbor = encodedPlutusDataList?.length
-      ? cbors.Encoder.encode(encodedPlutusDataList).toString("hex")
-      : "";
-
-    const redeemerCbor = encodedRedeemers
-      ? cbors.Encoder.encode(encodedRedeemers).toString("hex")
-      : cbors.Encoder.encode([]).toString("hex");
-
-    const scriptData = Buffer.from(redeemerCbor + plutusDataCbor + langViewCbor, "hex");
-    return hash32(scriptData);
+export const getPubKeyHashListFromNativeScript = (nativeScript: NativeScript): Array<string> => {
+  const fromScripts = (scripts: Array<NativeScript>) =>
+    scripts.flatMap((script) => getPubKeyHashListFromNativeScript(script));
+  if ("pubKeyHash" in nativeScript) {
+    return [nativeScript.pubKeyHash];
   }
-  return undefined;
-};
-
-const getPubKeyHashFromNativeScripts = (nativeScripts: Array<NativeScript>) => {
-  let pubKeyHashList: Array<string> = [];
-  for (const ns of nativeScripts) {
-    const result = getPubKeyHashListFromNativeScript(ns);
-    pubKeyHashList = _.concat(pubKeyHashList, _.flatten(result));
+  if ("all" in nativeScript) {
+    return fromScripts(nativeScript.all);
   }
-  return pubKeyHashList;
-};
-
-export const getPubKeyHashListFromNativeScript = (nativeScript: any): Array<string> => {
-  let pubKeyHashList: Array<string> = [];
-  if (nativeScript.pubKeyHash) {
-    pubKeyHashList.push(nativeScript.pubKeyHash);
-  } else if (nativeScript.all) {
-    const result = getPubKeyHashFromNativeScripts(nativeScript.all);
-    pubKeyHashList = _.concat(pubKeyHashList, _.flatten(result));
-  } else if (nativeScript.any) {
-    const result = getPubKeyHashFromNativeScripts(nativeScript.any);
-    pubKeyHashList = _.concat(pubKeyHashList, _.flatten(result));
-  } else if (nativeScript.n) {
-    const result = getPubKeyHashFromNativeScripts(nativeScript.k);
-    pubKeyHashList = _.concat(pubKeyHashList, _.flatten(result));
+  if ("any" in nativeScript) {
+    return fromScripts(nativeScript.any);
   }
-  return pubKeyHashList;
+  if ("n" in nativeScript) {
+    return fromScripts(nativeScript.k);
+  }
+  return [];
 };

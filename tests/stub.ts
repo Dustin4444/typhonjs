@@ -1,8 +1,6 @@
-import BigNumber from "bignumber.js";
 import { utils } from "../src";
-import { BaseAddress, RewardAddress } from "../src/address";
+import { BaseAddress } from "../src/address";
 import {
-  GovAction,
   HashCredential,
   HashType,
   Input,
@@ -10,23 +8,24 @@ import {
   PlutusData,
   PlutusScript,
   PlutusScriptType,
-  ProposalProcedure,
   ProtocolParams,
   Voter,
   VotingProcedure,
 } from "../src/types";
 
+const { fromHex } = utils;
+
 // used by alonzo era min utxo calculation
-export const lovelacePerUtxoWord = new BigNumber(34482);
+export const lovelacePerUtxoWord = 34482n;
 
 export const pParams: ProtocolParams = {
-  minFeeA: new BigNumber(44),
-  minFeeB: new BigNumber(155381),
-  stakeKeyDeposit: new BigNumber(2000000),
-  utxoCostPerByte: new BigNumber(4310),
-  collateralPercent: new BigNumber(150),
-  priceSteps: new BigNumber(0.0577),
-  priceMem: new BigNumber(0.0000721),
+  minFeeA: 44n,
+  minFeeB: 155381n,
+  stakeKeyDeposit: 2000000n,
+  utxoCostPerByte: 4310n,
+  collateralPercent: 150,
+  priceMem: 0.0577,
+  priceSteps: 0.0000721,
   languageView: {
     PlutusScriptV1: [
       205665, 812, 1, 1, 1000, 571, 0, 1, 1000, 24177, 4, 1, 1000, 32, 117366, 10475, 4, 23000, 100,
@@ -73,35 +72,35 @@ export const pParams: ProtocolParams = {
     ],
   },
   maxValueSize: 5000,
-  minFeeRefScriptCostPerByte: new BigNumber(15),
+  minFeeRefScriptCostPerByte: 15,
 };
 
 export const tokens = [
   {
     policyId: "30aa65f5efa96eaf3bc9a3e76ff47c6eac6472f908d6591f93e329fe",
     assetName: "6d65746143686c616d79646961546f6b656e",
-    amount: new BigNumber(500),
+    amount: 500n,
   },
   {
     policyId: "d070f6b0e45fc3cd280e21fd4fcac4d59b3d35b23387eb6559455879",
     assetName: "6e6575726f6e",
-    amount: new BigNumber(500),
+    amount: 500n,
   },
   {
     policyId: "3691ce00d8a2bd035a85d77e5428e34da58de9acbeedeee8256b8175",
     assetName: "5350414345424142455a32323238",
-    amount: new BigNumber(1),
+    amount: 1n,
   },
   {
     policyId: "3691ce00d8a2bd035a85d77e5428e34da58de9acbeedeee8256b8175",
     assetName: "5350414345424142455a393635",
-    amount: new BigNumber(1),
+    amount: 1n,
   },
 ];
 
 const HARDENED = 2147483648;
 const paymentCred0: HashCredential = {
-  hash: Buffer.from("4eec4012a1a73ae0074028b016d1084cd9d39ac55bff0b52590dd137", "hex"),
+  hash: fromHex("4eec4012a1a73ae0074028b016d1084cd9d39ac55bff0b52590dd137"),
   type: HashType.ADDRESS,
   bipPath: {
     purpose: 1852 + HARDENED,
@@ -113,7 +112,7 @@ const paymentCred0: HashCredential = {
 };
 
 const paymentCred1: HashCredential = {
-  hash: Buffer.from("fbe39e3c2b61a864096ebbfb8ed7b7a3fc0a0265c8adafa954920e6f", "hex"),
+  hash: fromHex("fbe39e3c2b61a864096ebbfb8ed7b7a3fc0a0265c8adafa954920e6f"),
   type: HashType.ADDRESS,
   bipPath: {
     purpose: 1852 + HARDENED,
@@ -125,7 +124,7 @@ const paymentCred1: HashCredential = {
 };
 
 const paymentCred2: HashCredential = {
-  hash: Buffer.from("fbe39e3c2b61a864096ebbfb8ed7b7a3fc0a0265c8adafa954920e7f", "hex"),
+  hash: fromHex("fbe39e3c2b61a864096ebbfb8ed7b7a3fc0a0265c8adafa954920e7f"),
   type: HashType.ADDRESS,
   bipPath: {
     purpose: 1852 + HARDENED,
@@ -137,7 +136,7 @@ const paymentCred2: HashCredential = {
 };
 
 const paymentCredChange: HashCredential = {
-  hash: Buffer.from("041c5529bacf35c90dedf1a4c0394b04e2129ed6759adee51782ebdf", "hex"),
+  hash: fromHex("041c5529bacf35c90dedf1a4c0394b04e2129ed6759adee51782ebdf"),
   type: HashType.ADDRESS,
   bipPath: {
     purpose: 1852 + HARDENED,
@@ -149,7 +148,7 @@ const paymentCredChange: HashCredential = {
 };
 
 const stakeCredential: HashCredential = {
-  hash: Buffer.from("45d3dfac74ec966ef4b1ecafb14f6c0b8b0244505788bd8920892940", "hex"),
+  hash: fromHex("45d3dfac74ec966ef4b1ecafb14f6c0b8b0244505788bd8920892940"),
   type: HashType.ADDRESS,
   bipPath: {
     purpose: 1852 + HARDENED,
@@ -162,7 +161,6 @@ const stakeCredential: HashCredential = {
 
 const address1 = new BaseAddress(NetworkId.MAINNET, paymentCred0, stakeCredential);
 const address2 = new BaseAddress(NetworkId.MAINNET, paymentCred1, stakeCredential);
-const stakeAddress1 = new RewardAddress(NetworkId.MAINNET, stakeCredential);
 
 export const changeAddress = new BaseAddress(NetworkId.MAINNET, paymentCredChange, stakeCredential);
 export const receiverAddress = utils.getAddressFromString(
@@ -173,35 +171,35 @@ export const UTXOs: Array<Input> = [
   {
     txId: "d771da555feac5b6376652b284c20b39f7b5aef8ea8e03c927f7f731fed13314",
     index: 0,
-    amount: new BigNumber(50000000),
+    amount: 50000000n,
     tokens: [],
     address: address2,
   },
   {
     txId: "d771da555feac5b6376652b284c20b39f7b5aef8ea8e03c927f7f731fed13313",
     index: 0,
-    amount: new BigNumber(40000000),
+    amount: 40000000n,
     tokens: tokens,
     address: address2,
   },
   {
     txId: "d771da555feac5b6376652b284c20b39f7b5aef8ea8e03c927f7f731fed13312",
     index: 0,
-    amount: new BigNumber(30000000),
+    amount: 30000000n,
     tokens: [],
     address: address1,
   },
   {
     txId: "d771da555feac5b6376652b284c20b39f7b5aef8ea8e03c927f7f731fed13311",
     index: 0,
-    amount: new BigNumber(20000000),
+    amount: 20000000n,
     tokens: [],
     address: address1,
   },
   {
     txId: "d771da555feac5b6376652b284c20b39f7b5aef8ea8e03c927f7f731fed13310",
     index: 0,
-    amount: new BigNumber(10000000),
+    amount: 10000000n,
     tokens: [],
     address: address1,
   },
@@ -215,7 +213,7 @@ export const plutusDataD1: PlutusData = {
       fields: [
         {
           constructor: 0,
-          fields: [Buffer.from("8b9818f41dffe69cb6725294ab2e8411f955fba26b1987b13bd063da", "hex")],
+          fields: [fromHex("8b9818f41dffe69cb6725294ab2e8411f955fba26b1987b13bd063da")],
         },
         {
           constructor: 0,
@@ -225,9 +223,7 @@ export const plutusDataD1: PlutusData = {
               fields: [
                 {
                   constructor: 0,
-                  fields: [
-                    Buffer.from("1809eac6f8eb4d2fdb99c1e3c36295a4d669dd53b554a54d0a501fa7", "hex"),
-                  ],
+                  fields: [fromHex("1809eac6f8eb4d2fdb99c1e3c36295a4d669dd53b554a54d0a501fa7")],
                 },
               ],
             },
@@ -240,7 +236,7 @@ export const plutusDataD1: PlutusData = {
       fields: [
         {
           constructor: 0,
-          fields: [Buffer.from("8b9818f41dffe69cb6725294ab2e8411f955fba26b1987b13bd063da", "hex")],
+          fields: [fromHex("8b9818f41dffe69cb6725294ab2e8411f955fba26b1987b13bd063da")],
         },
         {
           constructor: 0,
@@ -250,9 +246,7 @@ export const plutusDataD1: PlutusData = {
               fields: [
                 {
                   constructor: 0,
-                  fields: [
-                    Buffer.from("1809eac6f8eb4d2fdb99c1e3c36295a4d669dd53b554a54d0a501fa7", "hex"),
-                  ],
+                  fields: [fromHex("1809eac6f8eb4d2fdb99c1e3c36295a4d669dd53b554a54d0a501fa7")],
                 },
               ],
             },
@@ -270,9 +264,9 @@ export const plutusDataD1: PlutusData = {
         {
           constructor: 0,
           fields: [
-            Buffer.from("85d87212f6096732ac1cdbf604a12aa8cfd1fd0b66ab28fc77d3764c", "hex"),
+            fromHex("85d87212f6096732ac1cdbf604a12aa8cfd1fd0b66ab28fc77d3764c"),
 
-            Buffer.from("44494e4f", "hex"),
+            fromHex("44494e4f"),
           ],
         },
 
@@ -297,32 +291,13 @@ export const plutusScriptV3S1: PlutusScript = {
   type: PlutusScriptType.PlutusScriptV3,
 };
 
-export const voter0: Voter = {
+const voter0: Voter = {
   type: 2,
   key: paymentCred2,
 };
 
-// hf init action
-export const govAction0: GovAction = {
-  type: 1,
-  action: {
-    prevActionId: null,
-    protocolVersion: [10, 0],
-  },
-};
-
-export const proposalProcedure0: ProposalProcedure = {
-  deposit: new BigNumber(100000000000),
-  rewardAccount: stakeAddress1.getBytes(),
-  govAction: govAction0,
-  anchor: {
-    url: "https://strica.io",
-    hash: Buffer.from("000000", "hex"),
-  },
-};
-
-export const govActionId0 = {
-  txId: Buffer.from("8c653ee5c9800e6d31e79b5a7f7d4400c81d44717ad4db633dc18d4c07e4a4fd", "hex"),
+const govActionId0 = {
+  txId: fromHex("8c653ee5c9800e6d31e79b5a7f7d4400c81d44717ad4db633dc18d4c07e4a4fd"),
   index: 0,
 };
 

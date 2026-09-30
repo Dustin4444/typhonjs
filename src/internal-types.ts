@@ -1,23 +1,13 @@
-/* eslint-disable no-use-before-define */
-import { Buffer } from "buffer";
-import { CborTag } from "@stricahq/cbors";
-import BigNumber from "bignumber.js";
-import { CertificateType, HashType, VoterType, VoteType, WitnessType } from "./types";
+import type { CborTag, EncodedCbor, IndefiniteArray } from "@stricahq/cbors";
+import type { CertificateType, HashType, VoterType, VoteType, WitnessType } from "./types";
 
 export type TokenBundle = Record<
   string, // this is policy id
   Array<{
     assetName: string;
-    amount: BigNumber;
+    amount: bigint;
   }>
 >;
-
-export enum RedeemerTag {
-  SPEND = 0,
-  MINT = 1,
-  CERT = 2,
-  REWARD = 3,
-}
 
 export enum TransactionBodyItemType {
   INPUTS = 0,
@@ -49,22 +39,22 @@ export enum OutputItemType {
   SCRIPT_REF = 3,
 }
 
-export type EncodedInput = [Buffer, number]; // number is trx index
-export type EncodedCollateralInput = [Buffer, number]; // number is trx index
-export type EncodedTokens = Map<Buffer, Map<Buffer, BigNumber>>;
-export type EncodedAmount = BigNumber | [BigNumber, EncodedTokens];
-export type EncodedDatumOption = [0, Buffer] | [1, CborTag];
+export type EncodedInput = [Uint8Array, number]; // number is trx index
+export type EncodedCollateralInput = [Uint8Array, number]; // number is trx index
+export type EncodedTokens = Map<Uint8Array, Map<Uint8Array, bigint>>;
+export type EncodedAmount = bigint | [bigint, EncodedTokens];
+export type EncodedDatumOption = [0, Uint8Array] | [1, CborTag];
 export type EncodedOutput = Map<
   OutputItemType,
-  Buffer | EncodedAmount | EncodedDatumOption | CborTag
+  Uint8Array | EncodedAmount | EncodedDatumOption | CborTag
 >;
-export type EncodedWithdrawals = Map<Buffer, BigNumber>;
-export type EncodedCredential = [HashType, Buffer];
+export type EncodedWithdrawals = Map<Uint8Array, bigint>;
+export type EncodedCredential = [HashType, Uint8Array];
 export type EncodedCommitteeHotCredential = EncodedCredential;
 export type EncodedCommitteeColdCredential = EncodedCredential;
 export type EncodedDRepCredential = EncodedCredential;
-export type EncodedDRep = [0, Buffer] | [1, Buffer] | [2] | [3];
-export type EncodedAnchor = [string, Buffer] | null;
+export type EncodedDRep = [0, Uint8Array] | [1, Uint8Array] | [2] | [3];
+export type EncodedAnchor = [string, Uint8Array] | null;
 export type EncodedStakeRegistrationCertificate = [
   CertificateType.STAKE_REGISTRATION,
   EncodedCredential,
@@ -76,17 +66,17 @@ export type EncodedStakeDeRegistrationCertificate = [
 export type EncodedStakeDelegationCertificate = [
   CertificateType.STAKE_DELEGATION,
   EncodedCredential,
-  Buffer,
+  Uint8Array,
 ];
 export type EncodedStakeKeyRegistrationCertificate = [
   CertificateType.STAKE_KEY_REGISTRATION,
   EncodedCredential,
-  BigNumber,
+  bigint,
 ];
 export type EncodedStakeKeyDeRegistrationCertificate = [
   CertificateType.STAKE_KEY_DE_REGISTRATION,
   EncodedCredential,
-  BigNumber,
+  bigint,
 ];
 export type EncodedVoteDelegationCertificate = [
   CertificateType.VOTE_DELEGATION,
@@ -96,27 +86,27 @@ export type EncodedVoteDelegationCertificate = [
 export type EncodedStakeVoteDelegationCertificate = [
   CertificateType.STAKE_VOTE_DELEG,
   EncodedCredential,
-  Buffer,
+  Uint8Array,
   EncodedDRep,
 ];
 export type EncodedStakeRegDelegationCertificate = [
   CertificateType.STAKE_REG_DELEG,
   EncodedCredential,
-  Buffer,
-  BigNumber,
+  Uint8Array,
+  bigint,
 ];
 export type EncodedVoteRegDelegationCertificate = [
   CertificateType.VOTE_REG_DELEG,
   EncodedCredential,
   EncodedDRep,
-  BigNumber,
+  bigint,
 ];
 export type EncodedStakeVoteRegDelegationCertificate = [
   CertificateType.STAKE_VOTE_REG_DELEG,
   EncodedCredential,
-  Buffer,
+  Uint8Array,
   EncodedDRep,
-  BigNumber,
+  bigint,
 ];
 export type EncodedCommitteeAuthHotCertificate = [
   CertificateType.COMMITTEE_AUTH_HOT,
@@ -131,13 +121,13 @@ export type EncodedCommitteeResignColdCertificate = [
 export type EncodedDRepRegCertificate = [
   CertificateType.DREP_REG,
   EncodedDRepCredential,
-  BigNumber,
+  bigint,
   EncodedAnchor,
 ];
 export type EncodedDRepDeRegCertificate = [
   CertificateType.DREP_DE_REG,
   EncodedDRepCredential,
-  BigNumber,
+  bigint,
 ];
 export type EncodedDRepUpdateCertificate = [
   CertificateType.DREP_UPDATE,
@@ -162,15 +152,17 @@ export type EncodedCertificate =
   | EncodedDRepUpdateCertificate;
 
 export type EncodedExUnits = [number, number];
-export type EncodedVKeyWitness = [Buffer, Buffer];
-export type EncodedPlutusScript = Buffer;
+export type EncodedVKeyWitness = [Uint8Array, Uint8Array];
+export type EncodedPlutusScript = Uint8Array;
 export type EncodedPlutusData =
   | number
-  | BigNumber
-  | Buffer
+  | bigint
+  | Uint8Array
   | Array<EncodedPlutusData>
+  | IndefiniteArray
   | Map<EncodedPlutusData, EncodedPlutusData>
-  | CborTag;
+  | CborTag
+  | EncodedCbor;
 
 export type EncodedRedeemer = [number, number, EncodedPlutusData, EncodedExUnits];
 
@@ -178,11 +170,12 @@ export type EncodedWitnesses = Map<WitnessType.V_KEY_WITNESS, Array<EncodedVKeyW
   Map<WitnessType.NATIVE_SCRIPT, Array<EncodedNativeScript>> &
   Map<WitnessType.PLUTUS_SCRIPT_V1, Array<EncodedPlutusScript>> &
   Map<WitnessType.PLUTUS_SCRIPT_V2, Array<EncodedPlutusScript>> &
+  Map<WitnessType.PLUTUS_SCRIPT_V3, Array<EncodedPlutusScript>> &
   Map<WitnessType.PLUTUS_DATA, Array<EncodedPlutusData>> &
   Map<WitnessType.REDEEMER, Array<EncodedRedeemer>>;
 
 // NativeScript types
-type NativeScriptPubKeyHash = [0, Buffer];
+type NativeScriptPubKeyHash = [0, Uint8Array];
 type NativeScriptAll = [1, Array<EncodedNativeScript>];
 type NativeScriptAny = [2, Array<EncodedNativeScript>];
 type NativeScriptNOfK = [3, number, Array<EncodedNativeScript>];
@@ -198,12 +191,12 @@ export type EncodedNativeScript =
   | NativeScriptInvalidAfter;
 // NativeScript types end
 
-export type EncodedConstitution = [EncodedAnchor, Buffer | null];
+export type EncodedConstitution = [EncodedAnchor, Uint8Array | null];
 
 // Voting Procedure encoding types
-export type EncodedGovActionId = [Buffer, number];
+export type EncodedGovActionId = [Uint8Array, number];
 export type EncodedVote = VoteType;
-export type EncodedVoter = [VoterType, Buffer];
+export type EncodedVoter = [VoterType, Uint8Array];
 export type EncodedVotingProcedure = [EncodedVote, EncodedAnchor];
 export type EncodedVotingProcedures = Map<
   EncodedVoter,
@@ -217,11 +210,11 @@ export type EncodedParamChangeAction = [
   0,
   EncodedGovActionId | null,
   EncodedProtocolParamUpdate,
-  Buffer | null,
+  Uint8Array | null,
 ];
 
 export type EncodedHFInitAction = [1, EncodedGovActionId | null, EncodedProtocolVersion];
-export type EncodedTreasuryWithdrawalsAction = [2, Map<Buffer, BigNumber>, Buffer | null];
+export type EncodedTreasuryWithdrawalsAction = [2, Map<Uint8Array, bigint>, Uint8Array | null];
 export type EncodedNoConfidenceAction = [3, EncodedGovActionId | null];
 export type EncodedUpdateCommittee = [
   4,
@@ -240,4 +233,4 @@ export type EncodedGovAction =
   | EncodedUpdateCommittee
   | EncodedNewConstitution
   | EncodedInfoAction;
-export type EncodedProposalProcedure = [BigNumber, Buffer, EncodedGovAction, EncodedAnchor];
+export type EncodedProposalProcedure = [bigint, Uint8Array, EncodedGovAction, EncodedAnchor];

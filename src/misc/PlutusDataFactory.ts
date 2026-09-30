@@ -1,26 +1,25 @@
-import { Buffer } from "buffer";
-import * as cbors from "@stricahq/cbors";
-import { PlutusData } from "../types";
+import { encode } from "@stricahq/cbors";
+import type { PlutusData } from "../types";
 import { hash32 } from "../utils/crypto";
 import { encodePlutusData } from "../utils/encoder";
 
 export class PlutusDataFactory {
   private plutusData: PlutusData;
-  private _cbor: Buffer;
-  private _plutusDataHash: Buffer;
+  private _cbor: Uint8Array;
+  private _plutusDataHash: Uint8Array;
 
   constructor(plutusData: PlutusData) {
     this.plutusData = plutusData;
     const encodedPlutusData = encodePlutusData(plutusData);
-    this._cbor = cbors.Encoder.encode(encodedPlutusData);
+    this._cbor = encode(encodedPlutusData);
     this._plutusDataHash = hash32(this._cbor);
   }
 
-  cbor(): Buffer {
+  cbor(): Uint8Array {
     return this._cbor;
   }
 
-  plutusDataHash(): Buffer {
+  plutusDataHash(): Uint8Array {
     return this._plutusDataHash;
   }
 
@@ -29,4 +28,4 @@ export class PlutusDataFactory {
   }
 }
 
-export default PlutusData;
+export default PlutusDataFactory;

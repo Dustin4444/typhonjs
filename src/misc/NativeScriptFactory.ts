@@ -1,13 +1,11 @@
-import { Buffer } from "buffer";
-import * as cbors from "@stricahq/cbors";
-import { CLINativeScript, NativeScript } from "../types";
-import { hash28 } from "../utils/crypto";
-import { encodeNativeScript } from "../utils/encoder";
+import { encode } from "@stricahq/cbors";
+import type { CLINativeScript, NativeScript } from "../types";
+import { encodeNativeScript, getNativeScriptHash } from "../utils/encoder";
 
 export class NativeScriptFactory {
   private nativeScript: NativeScript;
-  private _cbor: Buffer;
-  private _policyId: Buffer;
+  private _cbor: Uint8Array;
+  private _policyId: Uint8Array;
 
   /**
    *
@@ -15,16 +13,15 @@ export class NativeScriptFactory {
    */
   constructor(nativeScript: NativeScript) {
     this.nativeScript = nativeScript;
-    const encodedNativeScript = encodeNativeScript(nativeScript);
-    this._cbor = cbors.Encoder.encode(encodedNativeScript);
-    this._policyId = hash28(Buffer.from(`00${this._cbor.toString("hex")}`, "hex"));
+    this._cbor = encode(encodeNativeScript(nativeScript));
+    this._policyId = getNativeScriptHash(nativeScript);
   }
 
-  cbor(): Buffer {
+  cbor(): Uint8Array {
     return this._cbor;
   }
 
-  policyId(): Buffer {
+  policyId(): Uint8Array {
     return this._policyId;
   }
 
@@ -56,7 +53,7 @@ export class NativeScriptFactory {
           case "before":
             return { invalidAfter: script.slot };
           default:
-            throw new Error(`Unknown script type: ${(script as any).type}`);
+            throw new Error(`Unknown script type: ${(script as { type: unknown }).type}`);
         }
       }
       throw new Error("Invalid script format");

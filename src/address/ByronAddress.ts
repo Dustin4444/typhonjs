@@ -1,5 +1,5 @@
-import { Buffer } from "buffer";
 import bs58 from "bs58";
+import { toHex } from "../utils/bytes";
 
 /**
  * this class does not allow generating a Byron address
@@ -11,17 +11,17 @@ export class ByronAddress {
   protected addressBytes;
   protected addressBech32;
 
-  constructor(address: Buffer) {
+  constructor(address: Uint8Array) {
     this.addressBech32 = bs58.encode(address);
     this.addressBytes = address;
-    this.addressHex = address.toString("hex");
+    this.addressHex = toHex(address);
   }
 
   getHex(): string {
     return this.addressHex;
   }
 
-  getBytes(): Buffer {
+  getBytes(): Uint8Array {
     return this.addressBytes;
   }
 

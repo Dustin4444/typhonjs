@@ -1,11 +1,8 @@
-/* eslint-disable no-use-before-define */
-import { Buffer } from "buffer";
-import BigNumber from "bignumber.js";
-import BaseAddress from "./address/BaseAddress";
-import ByronAddress from "./address/ByronAddress";
-import EnterpriseAddress from "./address/EnterpriseAddress";
-import PointerAddress from "./address/PointerAddress";
-import RewardAddress from "./address/RewardAddress";
+import type BaseAddress from "./address/BaseAddress";
+import type ByronAddress from "./address/ByronAddress";
+import type EnterpriseAddress from "./address/EnterpriseAddress";
+import type PointerAddress from "./address/PointerAddress";
+import type RewardAddress from "./address/RewardAddress";
 
 export type ShelleyAddress = BaseAddress | EnterpriseAddress | PointerAddress;
 
@@ -54,8 +51,18 @@ export enum GovActionType {
   INFO_ACTION = 6,
 }
 
+/**
+ * An exact non-negative rational, the way the chain stores prices and thresholds (tag 30).
+ *
+ * - a decimal `number` or string: `0.0577`, `"0.0577"`, `"7.21e-5"`, read as written and
+ *   converted to lowest terms
+ * - a fraction string: `"577/10000"`
+ * - a `[numerator, denominator]` pair
+ */
+export type Rational = number | string | [number | bigint, number | bigint];
+
 export type HashCredential = {
-  hash: Buffer;
+  hash: Uint8Array;
   type: HashType.ADDRESS;
   bipPath?: BipPath;
 };
@@ -132,13 +139,18 @@ export type CLINativeScript =
   | CLINativeScriptAll
   | CLINativeScriptAny;
 
+/**
+ * A Plutus script. `cborHex` is either the `cborHex` of a cardano-cli text envelope (the
+ * script bytes wrapped in a CBOR byte string twice) or the script bytes as the ledger hashes
+ * them (wrapped once); both are accepted everywhere a script is used.
+ */
 export type PlutusScript = {
   cborHex: string;
   type: PlutusScriptType;
 };
 
 export type ScriptCredential = {
-  hash: Buffer;
+  hash: Uint8Array;
   type: HashType.SCRIPT;
   plutusScript?: PlutusScript;
   nativeScript?: NativeScript;
@@ -176,6 +188,7 @@ export enum WitnessType {
   PLUTUS_DATA = 4,
   REDEEMER = 5,
   PLUTUS_SCRIPT_V2 = 6,
+  PLUTUS_SCRIPT_V3 = 7,
 }
 
 export enum NetworkId {
@@ -186,13 +199,13 @@ export enum NetworkId {
 export type Token = {
   policyId: string;
   assetName: string;
-  amount: BigNumber;
+  amount: bigint;
 };
 
 export type Input = {
   txId: string;
   index: number;
-  amount: BigNumber;
+  amount: bigint;
   tokens: Array<Token>;
   address: ShelleyAddress;
   plutusData?: PlutusData;
@@ -204,7 +217,7 @@ export type Input = {
 export type ReferenceInput = {
   txId: string;
   index: number;
-  amount?: BigNumber;
+  amount?: bigint;
   tokens?: Array<Token>;
   address?: ShelleyAddress;
   plutusData?: PlutusData;
@@ -214,7 +227,7 @@ export type ReferenceInput = {
 
 export type Asset = {
   assetName: string;
-  amount: BigNumber;
+  amount: bigint;
 };
 
 export type Mint = {
@@ -225,15 +238,20 @@ export type Mint = {
   redeemer?: Redeemer;
 };
 
+/**
+ * A UTxO put up as collateral. Set `tokens` if it holds any, so they go back in the
+ * collateral return.
+ */
 export type CollateralInput = {
   txId: string;
   index: number;
-  amount: BigNumber;
+  amount: bigint;
+  tokens?: Array<Token>;
   address: ShelleyAddress;
 };
 
 export type Output = {
-  amount: BigNumber;
+  amount: bigint;
   address: CardanoAddress;
   tokens: Array<Token>;
   plutusData?: PlutusData;
@@ -251,12 +269,12 @@ export enum DRepType {
 
 export type DRep = {
   type: DRepType;
-  key: Buffer | undefined;
+  key: Uint8Array | undefined;
 };
 
 export type Anchor = {
   url: string;
-  hash: Buffer;
+  hash: Uint8Array;
 };
 
 export type StakeRegistrationCertificate = {
@@ -271,6 +289,7 @@ export type StakeDeRegistrationCertificate = {
   cert: {
     stakeCredential: StakeCredential;
   };
+  redeemer?: Redeemer;
 };
 
 export type StakeDelegationCertificate = {
@@ -279,22 +298,25 @@ export type StakeDelegationCertificate = {
     stakeCredential: StakeCredential;
     poolHash: string;
   };
+  redeemer?: Redeemer;
 };
 
 export type StakeKeyRegistrationCertificate = {
   type: CertificateType.STAKE_KEY_REGISTRATION;
   cert: {
     stakeCredential: StakeCredential;
-    deposit: BigNumber;
+    deposit: bigint;
   };
+  redeemer?: Redeemer;
 };
 
 export type StakeKeyDeRegistrationCertificate = {
   type: CertificateType.STAKE_KEY_DE_REGISTRATION;
   cert: {
     stakeCredential: StakeCredential;
-    deposit: BigNumber;
+    deposit: bigint;
   };
+  redeemer?: Redeemer;
 };
 
 export type VoteDelegationCertificate = {
@@ -303,24 +325,27 @@ export type VoteDelegationCertificate = {
     stakeCredential: StakeCredential;
     dRep: DRep;
   };
+  redeemer?: Redeemer;
 };
 
 export type StakeVoteDelegationCertificate = {
   type: CertificateType.STAKE_VOTE_DELEG;
   cert: {
     stakeCredential: StakeCredential;
-    poolKeyHash: Buffer;
+    poolKeyHash: Uint8Array;
     dRep: DRep;
   };
+  redeemer?: Redeemer;
 };
 
 export type StakeRegDelegationCertificate = {
   type: CertificateType.STAKE_REG_DELEG;
   cert: {
     stakeCredential: StakeCredential;
-    poolKeyHash: Buffer;
-    deposit: BigNumber;
+    poolKeyHash: Uint8Array;
+    deposit: bigint;
   };
+  redeemer?: Redeemer;
 };
 
 export type VoteRegDelegationCertificate = {
@@ -328,18 +353,20 @@ export type VoteRegDelegationCertificate = {
   cert: {
     stakeCredential: StakeCredential;
     dRep: DRep;
-    deposit: BigNumber;
+    deposit: bigint;
   };
+  redeemer?: Redeemer;
 };
 
 export type StakeVoteRegDelegationCertificate = {
   type: CertificateType.STAKE_VOTE_REG_DELEG;
   cert: {
     stakeCredential: StakeCredential;
-    poolKeyHash: Buffer;
+    poolKeyHash: Uint8Array;
     dRep: DRep;
-    deposit: BigNumber;
+    deposit: bigint;
   };
+  redeemer?: Redeemer;
 };
 
 export type CommitteeAuthHotCertificate = {
@@ -348,6 +375,7 @@ export type CommitteeAuthHotCertificate = {
     coldCredential: CommitteeColdCredential;
     hotCredential: CommitteeHotCredential;
   };
+  redeemer?: Redeemer;
 };
 
 export type CommitteeResignColdCertificate = {
@@ -356,23 +384,26 @@ export type CommitteeResignColdCertificate = {
     coldCredential: CommitteeColdCredential;
     anchor: Anchor | null;
   };
+  redeemer?: Redeemer;
 };
 
 export type DRepRegCertificate = {
   type: CertificateType.DREP_REG;
   cert: {
     dRepCredential: DRepCredential;
-    deposit: BigNumber;
+    deposit: bigint;
     anchor: Anchor | null;
   };
+  redeemer?: Redeemer;
 };
 
 export type DRepDeRegCertificate = {
   type: CertificateType.DREP_DE_REG;
   cert: {
     dRepCredential: DRepCredential;
-    deposit: BigNumber;
+    deposit: bigint;
   };
+  redeemer?: Redeemer;
 };
 
 export type DRepUpdateCertificate = {
@@ -381,11 +412,13 @@ export type DRepUpdateCertificate = {
     dRepCredential: DRepCredential;
     anchor: Anchor | null;
   };
+  redeemer?: Redeemer;
 };
 
 export type Withdrawal = {
   rewardAccount: RewardAddress;
-  amount: BigNumber;
+  amount: bigint;
+  redeemer?: Redeemer;
 };
 
 export type Certificate =
@@ -406,11 +439,22 @@ export type Certificate =
   | DRepUpdateCertificate;
 
 export type VKeyWitness = {
-  publicKey: Buffer;
-  signature: Buffer;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
 };
 
-export type MetaDatum = Map<MetaDatum, MetaDatum> | Array<MetaDatum> | number | Buffer | string;
+/**
+ * Metadata value. Strings and byte strings hold at most 64 bytes (UTF-8 for strings), and
+ * integers fit in -(2^64 - 1) to 2^64 - 1. A plain object is written as a map with text keys.
+ */
+export type MetaDatum =
+  | Map<MetaDatum, MetaDatum>
+  | Array<MetaDatum>
+  | number
+  | bigint
+  | Uint8Array
+  | string
+  | { [key: string]: MetaDatum };
 
 export type Metadata = {
   label: number;
@@ -423,10 +467,15 @@ export type AuxiliaryData = {
   // TODO: plutusScript;
 };
 
+/**
+ * Plutus data. A `number` must be a safe integer, use a `bigint` beyond ±2^53. Byte strings
+ * longer than 64 bytes and integers beyond 64 bits are written in the chunked form the
+ * ledger requires.
+ */
 export type PlutusData =
   | number
-  | BigNumber
-  | Buffer
+  | bigint
+  | Uint8Array
   | PlutusDataConstructor
   | Array<PlutusData>
   | Map<PlutusData, PlutusData>;
@@ -441,9 +490,36 @@ export type ExUnits = {
   steps: number;
 };
 
+/**
+ * What a Plutus script runs with. It goes on whatever runs the script: a script input, a mint,
+ * a certificate, withdrawal or voting procedure of a Plutus script credential, or a proposal
+ * procedure with a policy hash.
+ */
 export type Redeemer = {
   plutusData: PlutusData;
   exUnits: ExUnits;
+};
+
+/**
+ * What a redeemer is for. With its index it points at the input, mint policy, certificate,
+ * withdrawal, voter or proposal whose script it runs.
+ */
+export enum RedeemerTag {
+  SPEND = 0,
+  MINT = 1,
+  CERT = 2,
+  REWARD = 3,
+  VOTING = 4,
+  PROPOSING = 5,
+}
+
+/**
+ * A redeemer with its pointer: what it's for, and the index of the item it redeems.
+ */
+export type TaggedRedeemer = {
+  tag: RedeemerTag;
+  index: number;
+  redeemer: Redeemer;
 };
 
 export type LanguageView = {
@@ -452,45 +528,57 @@ export type LanguageView = {
   PlutusScriptV3?: Array<number>;
 };
 
+/**
+ * The protocol parameters a transaction is built with. Payments and staking need only the
+ * required ones. The others are needed only by the transactions that use them, and building one
+ * without them throws an error that names each one missing:
+ *
+ * - `collateralPercent`, `priceMem`, `priceSteps` and the `languageView` of each Plutus
+ *   language it runs, for Plutus scripts
+ * - `minFeeRefScriptCostPerByte`, for spending or referencing a UTxO that holds a reference
+ *   script
+ *
+ * When `maxTxSize` is given, `prepareTransaction` throws for a transaction bigger than it.
+ */
 export type ProtocolParams = {
-  minFeeA: BigNumber;
-  minFeeB: BigNumber;
-  stakeKeyDeposit: BigNumber;
-  utxoCostPerByte: BigNumber;
-  collateralPercent?: BigNumber;
-  priceSteps?: BigNumber;
-  priceMem?: BigNumber;
-  languageView?: LanguageView;
-  maxTxSize?: number;
+  minFeeA: bigint;
+  minFeeB: bigint;
+  stakeKeyDeposit: bigint;
+  utxoCostPerByte: bigint;
   maxValueSize: number;
-  minFeeRefScriptCostPerByte: BigNumber;
+  maxTxSize?: number;
+  minFeeRefScriptCostPerByte?: Rational;
+  collateralPercent?: number;
+  priceMem?: Rational;
+  priceSteps?: Rational;
+  languageView?: LanguageView;
 };
 
 export type CostMdls = {
-  plutusV1: Array<number> | undefined;
-  plutusV2: Array<number> | undefined;
-  plutusV3: Array<number> | undefined;
+  plutusV1?: Array<number>;
+  plutusV2?: Array<number>;
+  plutusV3?: Array<number>;
 };
 
 export type ProtocolParamUpdate = {
-  minFeeA?: BigNumber;
-  minFeeB?: BigNumber;
+  minFeeA?: bigint;
+  minFeeB?: bigint;
   maxBlockBodySize?: number;
   maxTransactionSize?: number;
   maxBlockHeaderSize?: number;
-  stakeKeyDeposit?: BigNumber;
-  poolDeposit?: BigNumber;
+  stakeKeyDeposit?: bigint;
+  poolDeposit?: bigint;
   poolRetireMaxEpoch?: number;
   n?: number;
-  pledgeInfluence?: [number, number];
-  expansionRate?: [number, number];
-  treasuryGrowthRate?: [number, number];
-  minPoolCost?: BigNumber;
-  adaPerUtxoByte?: BigNumber;
+  pledgeInfluence?: Rational;
+  expansionRate?: Rational;
+  treasuryGrowthRate?: Rational;
+  minPoolCost?: bigint;
+  adaPerUtxoByte?: bigint;
   costMdls?: CostMdls;
   exUnitPrices?: {
-    mem: [number, number];
-    steps: [number, number];
+    mem: Rational;
+    steps: Rational;
   };
   maxTxExUnits?: {
     mem: number;
@@ -500,35 +588,35 @@ export type ProtocolParamUpdate = {
     mem: number;
     steps: number;
   };
-  maxValueSize?: BigNumber;
+  maxValueSize?: number;
   collateralPercent?: number;
   maxCollateralInputs?: number;
   poolVotingThreshold?: {
-    motionNoConfidence: number;
-    committeeNormal: number;
-    committeeNoConfidence: number;
-    hfInitiation: number;
-    securityParamVoting: number;
+    motionNoConfidence: Rational;
+    committeeNormal: Rational;
+    committeeNoConfidence: Rational;
+    hfInitiation: Rational;
+    securityParamVoting: Rational;
   };
   dRepVotingThreshold?: {
-    motionNoConfidence: number;
-    committeeNormal: number;
-    committeeNoConfidence: number;
-    updateConstitution: number;
-    hfInitiation: number;
-    networkParamVoting: number;
-    economicParamVoting: number;
-    technicalParamVoting: number;
-    govParamVoting: number;
-    treasuryWithdrawal: number;
+    motionNoConfidence: Rational;
+    committeeNormal: Rational;
+    committeeNoConfidence: Rational;
+    updateConstitution: Rational;
+    hfInitiation: Rational;
+    networkParamVoting: Rational;
+    economicParamVoting: Rational;
+    technicalParamVoting: Rational;
+    govParamVoting: Rational;
+    treasuryWithdrawal: Rational;
   };
   minCommitteeSize?: number;
   committeeTermLimit?: number;
   govActionValidity?: number;
-  govActionDeposit?: BigNumber;
-  dRepDeposit?: BigNumber;
+  govActionDeposit?: bigint;
+  dRepDeposit?: bigint;
   dRepInactivity?: number;
-  refScriptCostByte?: [number, number];
+  refScriptCostByte?: Rational;
 };
 
 export type ParameterChangeAction = {
@@ -536,7 +624,7 @@ export type ParameterChangeAction = {
   action: {
     prevActionId: GovActionId | null;
     protocolParamUpdate: ProtocolParamUpdate;
-    policyHash: Buffer | null;
+    policyHash: Uint8Array | null;
   };
 };
 
@@ -552,7 +640,7 @@ export type TreasuryWithdrawalsAction = {
   type: GovActionType.TREASURY_WITHDRAW_ACTION;
   action: {
     withdrawals: Array<Withdrawal>;
-    policyHash: Buffer | null;
+    policyHash: Uint8Array | null;
   };
 };
 
@@ -572,7 +660,7 @@ export type UpdateCommitteeAction = {
       credential: CommitteeColdCredential;
       epoch: number;
     }>;
-    threshold: [number, number];
+    threshold: Rational;
   };
 };
 
@@ -582,7 +670,7 @@ export type NewConstitutionAction = {
     prevActionId: GovActionId | null;
     constitution: {
       anchor: Anchor;
-      scriptHash: Buffer | null;
+      scriptHash: Uint8Array | null;
     };
   };
 };
@@ -601,7 +689,7 @@ export type GovAction =
   | InfoAction;
 
 export type GovActionId = {
-  txId: Buffer;
+  txId: Uint8Array;
   index: number;
 };
 
@@ -619,11 +707,18 @@ export type Voter = {
 export type VotingProcedure = {
   voter: Voter;
   votes: Array<Vote>;
+  redeemer?: Redeemer;
 };
 
+/**
+ * A governance proposal. A parameter change or treasury withdrawal with a `policyHash` runs
+ * that script: give it as `plutusScript`, or in a reference input, along with its `redeemer`.
+ */
 export type ProposalProcedure = {
-  deposit: BigNumber;
-  rewardAccount: Buffer;
+  deposit: bigint;
+  rewardAccount: Uint8Array;
   govAction: GovAction;
   anchor: Anchor;
+  plutusScript?: PlutusScript;
+  redeemer?: Redeemer;
 };

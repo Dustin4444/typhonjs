@@ -1,12 +1,13 @@
-import { Buffer } from "buffer";
 import { bech32 } from "bech32";
-import { NetworkId, Credential } from "../types";
+import { HashType, NetworkId } from "../types";
+import type { Credential } from "../types";
+import { concatBytes, toHex } from "../utils/bytes";
 
 export abstract class ShelleyTypeAddress {
   protected _paymentCredential: Credential;
   protected networkId: NetworkId;
   protected addressHex = "";
-  protected addressBytes = Buffer.alloc(0);
+  protected addressBytes: Uint8Array = new Uint8Array(0);
   protected addressBech32 = "";
 
   constructor(networkId: NetworkId, paymentCredential: Credential) {
@@ -16,7 +17,21 @@ export abstract class ShelleyTypeAddress {
 
   protected abstract computeHex(): void;
 
-  protected computeBech32(address: Buffer): string {
+  /**
+   * Sets the address from its header byte and payload: the header's type nibble,
+   * with bit 4 set for a script payment credential, and the network id.
+   */
+  protected setAddress(header: number, ...payload: Array<Uint8Array>): void {
+    let byte = header | this.networkId;
+    if (this._paymentCredential.type === HashType.SCRIPT) {
+      byte |= 1 << 4;
+    }
+    this.addressBytes = concatBytes(Uint8Array.of(byte), ...payload);
+    this.addressHex = toHex(this.addressBytes);
+    this.addressBech32 = this.computeBech32(this.addressBytes);
+  }
+
+  protected computeBech32(address: Uint8Array): string {
     const data = this.networkId === NetworkId.MAINNET ? "addr" : "addr_test";
     const words = bech32.toWords(address);
     const encoded = bech32.encode(data, words, 1000);
@@ -31,7 +46,7 @@ export abstract class ShelleyTypeAddress {
     return this.addressHex;
   }
 
-  getBytes(): Buffer {
+  getBytes(): Uint8Array {
     return this.addressBytes;
   }
 

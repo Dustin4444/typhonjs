@@ -1,13 +1,18 @@
-import BigNumber from "bignumber.js";
-import _ = require("lodash");
-import { CardanoAddress, Input, Output, CollateralInput } from "../../types";
-import { getTokenDiff } from "../../utils/helpers";
+import type { CardanoAddress, Input, Output, CollateralInput, Token } from "../../types";
+import { maxAdaAmount } from "../../constants";
+import { txInKey } from "../../utils/encoder";
+import { getTokenDiff, getUniqueTokens } from "../../utils/helpers";
+import { ceilDiv } from "../../utils/rational";
 import {
   calculateMinUtxoAmountBabbage,
-  getAddressFromHex,
   getMaximumTokenSets,
+  getOutputValueSize,
 } from "../../utils/utils";
-import Transaction from "../Transaction";
+import type Transaction from "../Transaction";
+import { requireParam } from "./protocolParams";
+
+// leftover ADA below this goes to the fee when it can't make a change output of its own
+const MAX_CHANGE_AS_FEE = 2000000n;
 
 export function transactionBuilder({
   transaction,
@@ -19,75 +24,130 @@ export function transactionBuilder({
   inputs: Array<Input>;
   changeAddress: CardanoAddress;
   collateralInputs?: Array<CollateralInput>;
-}): Transaction {
-  const verifyCollateral = (currentFee: BigNumber) => {
-    const isPlutusTx = transaction.isPlutusTransaction();
-    if (isPlutusTx) {
-      if (transaction.protocolParams.collateralPercent == null) {
-        throw new Error(
-          "protocolParams.collateralPercent is required for Plutus script transactions"
-        );
-      }
-      const currentCollateral = transaction.getCollateralAmount();
-      const requiredCollateral = currentFee
-        .times(transaction.protocolParams.collateralPercent)
-        .div(100);
-      if (currentCollateral.lt(requiredCollateral)) {
-        throw new Error(
-          "Not enough collateral supplied, collaterals with tokens are not valid collaterals"
-        );
-      }
-    }
+}): Array<Output> {
+  const { protocolParams } = transaction;
+
+  const changeOutputs: Array<Output> = [];
+  const addChange = (output: Output) => {
+    transaction.addOutput(output);
+    changeOutputs.push(output);
   };
 
-  const addCollateral = (currentFee: BigNumber) => {
-    if (collateralInputs && collateralInputs.length > 0) {
-      if (transaction.protocolParams.collateralPercent == null) {
-        throw new Error(
-          "protocolParams.collateralPercent is required for Plutus script transactions"
-        );
-      }
-      const currentCollateral = transaction.getCollateralAmount();
-      const requiredCollateral = currentFee
-        .times(transaction.protocolParams.collateralPercent)
-        .div(100);
-      while (currentCollateral.lt(requiredCollateral) && collateralInputs.length > 0) {
-        const col = collateralInputs.pop();
-        if (col) {
-          transaction.addCollateral(col);
-          // the new Fee also affects collateral, but collateral utxo is in enough amount, that this race condition is unlikely to happen
-        }
-      }
+  // minimum ADA of an output to the change address
+  const changeMinUtxo = (tokens: Array<Token>): bigint =>
+    calculateMinUtxoAmountBabbage(
+      { address: changeAddress, amount: maxAdaAmount, tokens },
+      protocolParams.utxoCostPerByte
+    );
+
+  const minUtxo = changeMinUtxo([]);
+
+  // the least a failing script has to be able to take: the collateral percentage of the fee
+  const requiredCollateral = (fee: bigint): bigint =>
+    ceilDiv(fee * BigInt(requireParam(protocolParams, "collateralPercent")), 100n);
+
+  const collateralValue = (): { ada: bigint; tokens: Array<Token> } => {
+    let ada = 0n;
+    const tokens: Array<Token> = [];
+    for (const collateral of transaction.getCollaterals()) {
+      ada += collateral.amount;
+      tokens.push(...(collateral.tokens ?? []));
     }
+    return { ada, tokens: getUniqueTokens(tokens) };
   };
 
-  const minUtxo = calculateMinUtxoAmountBabbage(
-    {
-      address: getAddressFromHex(
-        Buffer.from(
-          "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-          "hex"
-        )
-      ),
-      amount: new BigNumber(45000000000000000),
-      tokens: [],
-    },
-    new BigNumber(transaction.protocolParams.utxoCostPerByte)
+  // A failing script can only take ADA, so the tokens of the collateral have to go back in the
+  // collateral return, with enough ADA left for that output. Only a transaction that runs
+  // Plutus scripts puts up collateral.
+  const coversFee = (fee: bigint): boolean => {
+    if (!transaction.isPlutusTransaction()) {
+      return true;
+    }
+    if (transaction.getCollaterals().length === 0) {
+      return false;
+    }
+    const { ada, tokens } = collateralValue();
+    const required = requiredCollateral(fee);
+    return tokens.length > 0 ? ada - required >= changeMinUtxo(tokens) : ada >= required;
+  };
+
+  // The fee with the collateral return and total collateral in the transaction. They're sized
+  // with all of the collateral, which the final amounts never exceed. The return is left out
+  // when the collateral holds no tokens and what the script wouldn't take is below minimum ADA.
+  const collateralFee = (extraOutputs?: Array<Output>): bigint => {
+    if (!transaction.isPlutusTransaction() || transaction.getCollaterals().length === 0) {
+      return transaction.calculateFee(extraOutputs);
+    }
+    const { ada, tokens } = collateralValue();
+    transaction.setTotalCollateral(ada);
+    transaction.setCollateralOutput({ address: changeAddress, amount: ada, tokens });
+    const fee = transaction.calculateFee(extraOutputs);
+    if (tokens.length > 0 || ada - requiredCollateral(fee) >= minUtxo) {
+      return fee;
+    }
+    transaction.setCollateralOutput(undefined);
+    return transaction.calculateFee(extraOutputs);
+  };
+
+  const addedCollaterals = new Set(
+    transaction.getCollaterals().map((collateral) => txInKey(collateral.txId, collateral.index))
+  );
+  const availableCollaterals = collateralInputs.filter(
+    (collateral) => !addedCollaterals.has(txInKey(collateral.txId, collateral.index))
   );
 
-  const utxoInputs = _.cloneDeep(inputs);
+  // Adds collateral inputs, from the end of the list, until they cover the fee, or `fixedFee`
+  // when the fee is set to that. Each one makes the transaction bigger, so the fee it covers
+  // can grow past it.
+  const feeWithCollateral = (extraOutputs?: Array<Output>, fixedFee?: bigint): bigint => {
+    let fee = collateralFee(extraOutputs);
+    while (!coversFee(fixedFee ?? fee) && availableCollaterals.length > 0) {
+      transaction.addCollateral(availableCollaterals.pop()!);
+      fee = collateralFee(extraOutputs);
+    }
+    return fee;
+  };
+
+  // the collateral return and total collateral for the final fee
+  const settleCollateral = (fee: bigint) => {
+    if (!transaction.isPlutusTransaction()) {
+      return;
+    }
+    if (!coversFee(fee)) {
+      throw new Error("Not enough collateral supplied");
+    }
+    const { ada, tokens } = collateralValue();
+    const required = requiredCollateral(fee);
+    if (transaction.getCollateralOutput() && ada - required >= changeMinUtxo(tokens)) {
+      if (getOutputValueSize(ada - required, tokens) > protocolParams.maxValueSize) {
+        throw new Error("Tokens of the collateral don't fit in a collateral return");
+      }
+      transaction.setCollateralOutput({ address: changeAddress, amount: ada - required, tokens });
+      transaction.setTotalCollateral(required);
+    } else {
+      transaction.setCollateralOutput(undefined);
+      transaction.setTotalCollateral(ada);
+    }
+  };
+
+  const seen = new Set<string>();
+  const utxoInputs = inputs
+    .filter((input) => {
+      const key = txInKey(input.txId, input.index);
+      if (seen.has(key) || transaction.hasInput(input)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((input) => ({ ...input, tokens: [...input.tokens] }));
 
   // Add Inputs
-  // there needs to be min one input, add that first
-  if (utxoInputs.length > 0) {
-    const firstInput = utxoInputs.splice(0, 1)[0];
+  // there needs to be min one input
+  if (transaction.getInputs().length === 0) {
+    const firstInput = utxoInputs.shift();
+    if (!firstInput) {
+      throw new Error("No inputs to spend");
+    }
     transaction.addInput(firstInput);
-  }
-
-  // add first collateral, if collaterals are supplied
-  const col = collateralInputs.pop();
-  if (col) {
-    transaction.addCollateral(col);
   }
 
   for (const utxo of utxoInputs) {
@@ -97,90 +157,56 @@ export function transactionBuilder({
     const additionalOutput = transaction.getAdditionalOutputAda();
     const additionalInput = transaction.getAdditionalInputAda();
 
-    let trxFeeWithoutChange = transaction.calculateFee();
+    const trxFeeWithoutChange = feeWithCollateral();
 
-    addCollateral(trxFeeWithoutChange);
-    trxFeeWithoutChange = transaction.calculateFee();
-
-    const currentInput = totalInputAda.plus(additionalInput);
-    const requiredInput = totalOutputAda.plus(additionalOutput).plus(trxFeeWithoutChange);
+    const currentInput = totalInputAda + additionalInput;
+    const requiredInput = totalOutputAda + additionalOutput + trxFeeWithoutChange;
 
     const tokenDiff = getTokenDiff(totalInputTokens, totalOutputTokens);
 
     if (tokenDiff.length === 0) {
-      if (currentInput.eq(requiredInput)) {
+      if (currentInput === requiredInput) {
         // we got enough input
         break;
-      } else if (currentInput.gt(requiredInput)) {
+      } else if (currentInput > requiredInput) {
         // input diff without fee
-        const inputDiff = currentInput.minus(totalOutputAda.plus(additionalOutput));
+        const inputDiff = currentInput - (totalOutputAda + additionalOutput);
         // not equal to, as there will be a fee above minUtxo
-        if (inputDiff.gt(minUtxo)) {
-          let feeWithChange = transaction.calculateFee([
-            {
-              address: changeAddress,
-              amount: inputDiff,
-              tokens: [],
-            },
-          ]);
-          addCollateral(trxFeeWithoutChange);
-          feeWithChange = transaction.calculateFee([
-            {
-              address: changeAddress,
-              amount: inputDiff,
-              tokens: [],
-            },
-          ]);
-          if (inputDiff.gte(feeWithChange.plus(minUtxo))) {
+        if (inputDiff > minUtxo) {
+          const changeOutput = { address: changeAddress, amount: inputDiff, tokens: [] };
+          const feeWithChange = feeWithCollateral([changeOutput]);
+          if (inputDiff >= feeWithChange + minUtxo) {
             // we got enough input
             break;
           }
         }
       }
-    } else if (!tokenDiff.some(({ amount }) => amount.lt(0))) {
-      const tokensTokens = getMaximumTokenSets(tokenDiff, transaction.protocolParams.maxValueSize);
+    } else if (!tokenDiff.some(({ amount }) => amount < 0n)) {
+      const tokensTokens = getMaximumTokenSets(tokenDiff, protocolParams.maxValueSize);
       const changeOutputs: Array<Output> = [];
-      let inputDiff = currentInput.minus(totalOutputAda.plus(additionalOutput));
-      let extraAdaRequired = new BigNumber(0);
+      let inputDiff = currentInput - (totalOutputAda + additionalOutput);
+      let extraAdaRequired = 0n;
       for (const [index, tokens] of tokensTokens.entries()) {
-        const minUtxo = calculateMinUtxoAmountBabbage(
-          {
-            address: changeAddress,
-            amount: new BigNumber(45000000000000000),
-            tokens,
-          },
-          new BigNumber(transaction.protocolParams.utxoCostPerByte)
-        );
+        const minUtxo = changeMinUtxo(tokens);
         let outputAmount = minUtxo;
         if (index === tokensTokens.length - 1) {
           // last set, add full ada diff as output
-          let feeWithChange = transaction.calculateFee([
-            ...changeOutputs,
-            {
-              address: changeAddress,
-              amount: inputDiff.lt(minUtxo) ? minUtxo : inputDiff,
-              tokens: tokens,
-            },
-          ]);
-          addCollateral(feeWithChange);
-          feeWithChange = transaction.calculateFee([
-            ...changeOutputs,
-            {
-              address: changeAddress,
-              amount: inputDiff.lt(minUtxo) ? minUtxo : inputDiff,
-              tokens: tokens,
-            },
-          ]);
-          const minADA = minUtxo.plus(feeWithChange);
-          if (inputDiff.gte(minADA)) {
+          const lastOutput = {
+            address: changeAddress,
+            amount: inputDiff < minUtxo ? minUtxo : inputDiff,
+            tokens: tokens,
+          };
+          const feeWithChange = feeWithCollateral([...changeOutputs, lastOutput]);
+          const minADA = minUtxo + feeWithChange;
+          if (inputDiff >= minADA) {
             outputAmount = inputDiff;
           } else {
-            extraAdaRequired = extraAdaRequired.plus(minADA.minus(inputDiff));
+            extraAdaRequired += minADA - inputDiff;
           }
-        } else if (inputDiff.gte(minUtxo)) {
-          inputDiff = inputDiff.minus(minUtxo);
+        } else if (inputDiff >= minUtxo) {
+          inputDiff -= minUtxo;
         } else {
-          extraAdaRequired = extraAdaRequired.plus(minUtxo.minus(inputDiff));
+          extraAdaRequired += minUtxo - inputDiff;
         }
         changeOutputs.push({
           address: changeAddress,
@@ -188,7 +214,7 @@ export function transactionBuilder({
           tokens: tokens,
         });
       }
-      if (extraAdaRequired.eq(0)) {
+      if (extraAdaRequired === 0n) {
         // we got enough input
         break;
       }
@@ -201,38 +227,41 @@ export function transactionBuilder({
   const { ada: totalOutputAda, tokens: totalOutputTokens } = transaction.getOutputAmount();
   const additionalOutput = transaction.getAdditionalOutputAda();
   const additionalInput = transaction.getAdditionalInputAda();
-  const currentInput = totalInputAda.plus(additionalInput);
-  const currentOutput = totalOutputAda.plus(additionalOutput);
+  const currentInput = totalInputAda + additionalInput;
+  const currentOutput = totalOutputAda + additionalOutput;
   const tokenDiff = getTokenDiff(totalInputTokens, totalOutputTokens);
 
   if (tokenDiff.length === 0) {
-    const feeWithoutChange = transaction.calculateFee();
-    const outputWithFee = currentOutput.plus(feeWithoutChange);
-    if (currentInput.eq(outputWithFee)) {
+    const feeWithoutChange = feeWithCollateral();
+    const outputWithFee = currentOutput + feeWithoutChange;
+    if (currentInput === outputWithFee) {
       // no change required
+      settleCollateral(feeWithoutChange);
       transaction.setFee(feeWithoutChange);
-      verifyCollateral(feeWithoutChange);
-    } else if (currentInput.gt(outputWithFee)) {
-      const changeADA = currentInput.minus(currentOutput);
-      // not equal to, as there will be a a slightly higher fee with new change
-      if (changeADA.gt(minUtxo.plus(feeWithoutChange))) {
-        const feeWithChange = transaction.calculateFee([
-          {
-            address: changeAddress,
-            amount: changeADA,
-            tokens: [],
-          },
-        ]);
-        verifyCollateral(feeWithChange);
-        transaction.setFee(feeWithChange);
-        transaction.addOutput({
+    } else if (currentInput > outputWithFee) {
+      const changeADA = currentInput - currentOutput;
+      const feeWithChange = feeWithCollateral([
+        {
           address: changeAddress,
-          amount: changeADA.minus(feeWithChange),
+          amount: changeADA,
+          tokens: [],
+        },
+      ]);
+      if (changeADA - feeWithChange >= minUtxo) {
+        settleCollateral(feeWithChange);
+        transaction.setFee(feeWithChange);
+        addChange({
+          address: changeAddress,
+          amount: changeADA - feeWithChange,
           tokens: [],
         });
-      } else if (changeADA.lt(2000000)) {
+      } else if (changeADA < MAX_CHANGE_AS_FEE) {
         // if change is less than 2 ADA
         // not enough ADA for a change, set remaining ADA as fee
+        if (feeWithCollateral(undefined, changeADA) > changeADA) {
+          throw new Error("Not enough ADA");
+        }
+        settleCollateral(changeADA);
         transaction.setFee(changeADA);
       } else {
         throw new Error("Not enough ADA");
@@ -240,38 +269,32 @@ export function transactionBuilder({
     } else {
       throw new Error("Not enough ADA");
     }
-  } else if (!tokenDiff.some(({ amount }) => amount.lt(0))) {
-    const tokensTokens = getMaximumTokenSets(
-      _.clone(tokenDiff),
-      transaction.protocolParams.maxValueSize
-    );
+  } else if (!tokenDiff.some(({ amount }) => amount < 0n)) {
+    const tokensTokens = getMaximumTokenSets(tokenDiff, protocolParams.maxValueSize);
     const changeOutputs: Array<Output> = [];
     {
-      let changeADA = currentInput.minus(currentOutput);
+      let changeADA = currentInput - currentOutput;
       tokensTokens.forEach((tokens, index) => {
-        const minUtxo = calculateMinUtxoAmountBabbage(
-          { address: changeAddress, amount: new BigNumber(45000000000000000), tokens },
-          new BigNumber(transaction.protocolParams.utxoCostPerByte)
-        );
+        const minUtxo = changeMinUtxo(tokens);
         let outputAmount = minUtxo;
         if (index === tokensTokens.length - 1) {
           // last set, add full ada diff as output
-          const feeWithChange = transaction.calculateFee([
+          const feeWithChange = feeWithCollateral([
             ...changeOutputs,
             {
               address: changeAddress,
-              amount: changeADA.lt(minUtxo) ? minUtxo : changeADA,
+              amount: changeADA < minUtxo ? minUtxo : changeADA,
               tokens: tokens,
             },
           ]);
-          const minADA = minUtxo.plus(feeWithChange);
-          if (changeADA.gte(minADA)) {
+          const minADA = minUtxo + feeWithChange;
+          if (changeADA >= minADA) {
             outputAmount = changeADA;
           } else {
             throw new Error("Not enough ADA");
           }
-        } else if (changeADA.gte(minUtxo)) {
-          changeADA = changeADA.minus(minUtxo);
+        } else if (changeADA >= minUtxo) {
+          changeADA -= minUtxo;
         } else {
           throw new Error("Not enough ADA");
         }
@@ -282,23 +305,20 @@ export function transactionBuilder({
         });
       });
     }
-    const feeWithChange = transaction.calculateFee(changeOutputs);
-    verifyCollateral(feeWithChange);
+    const feeWithChange = feeWithCollateral(changeOutputs);
+    settleCollateral(feeWithChange);
     transaction.setFee(feeWithChange);
-    let changeADA = currentInput.minus(currentOutput).minus(feeWithChange);
+    let changeADA = currentInput - currentOutput - feeWithChange;
     tokensTokens.forEach((tokens, index) => {
-      const minUtxo = calculateMinUtxoAmountBabbage(
-        { address: changeAddress, amount: new BigNumber(45000000000000000), tokens },
-        new BigNumber(transaction.protocolParams.utxoCostPerByte)
-      );
+      const minUtxo = changeMinUtxo(tokens);
       let outputAmount = minUtxo;
       if (index === tokensTokens.length - 1) {
         // last set, add full ada diff as output
         outputAmount = changeADA;
-      } else if (changeADA.gte(minUtxo)) {
-        changeADA = changeADA.minus(minUtxo);
+      } else if (changeADA >= minUtxo) {
+        changeADA -= minUtxo;
       }
-      transaction.addOutput({
+      addChange({
         address: changeAddress,
         amount: outputAmount,
         tokens: tokens,
@@ -310,10 +330,10 @@ export function transactionBuilder({
 
   const txSize = transaction.calculateTxSize();
 
-  if (transaction.protocolParams.maxTxSize && txSize > transaction.protocolParams.maxTxSize) {
+  if (protocolParams.maxTxSize && txSize > protocolParams.maxTxSize) {
     throw new Error("Tx size limit reached, try spending lesser ADA/Tokens");
   }
-  return transaction;
+  return changeOutputs;
 }
 
 export default transactionBuilder;
